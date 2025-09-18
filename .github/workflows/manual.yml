@@ -22,23 +22,23 @@ jobs:
       - name: Mostrar ramas BEP actualizadas hoy
         run: |
           TODAY=$(date -u +"%Y-%m-%d")
-
+      
           echo "🔎 Buscando ramas BEP actualizadas hoy: $TODAY"
           echo ""
-
+      
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
-            grep -E '^origin/BEP-[0-9]+' | while read branch; do
-
+            grep -E '^origin/BEP-[0-9]+$' | while read branch; do
+      
             BRANCH_NAME="${branch#origin/}"
             LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
-
+      
             if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
               echo "⚠️  No se pudo obtener la fecha para $BRANCH_NAME"
               continue
             fi
-
+      
             LAST_COMMIT_DAY=$(date -d "$LAST_COMMIT_DATE" +%Y-%m-%d)
-
+      
             if [ "$LAST_COMMIT_DAY" = "$TODAY" ]; then
               echo "📅 Rama actualizada HOY: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
             else
