@@ -19,7 +19,7 @@ jobs:
       - name: Fetch all branches
         run: git fetch --all
 
-      - name: Mostrar ramas tipo JIRA actualizadas hoy (excluyendo 'test')
+      - name: Mostrar ramas tipo JIRA actualizadas hoy (excluyendo específicas)
         run: |
           TODAY=$(date -u +"%Y-%m-%d")
 
@@ -28,7 +28,7 @@ jobs:
 
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
             grep -E '^origin/[A-Z]+-[0-9]+' | \
-            grep -v -E '^origin/(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template)$' | \while read branch; do
+            grep -v -E '^origin/(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template)$' | while read branch; do
 
             BRANCH_NAME="${branch#origin/}"
             LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
