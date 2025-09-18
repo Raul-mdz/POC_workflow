@@ -1,0 +1,47 @@
+name: Detect BEP branches actualizadas hoy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dry-run-today-bep-branches:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+
+      - name: Fetch all branches
+        run: git fetch --all
+
+      - name: Mostrar ramas BEP actualizadas hoy
+        run: |
+          TODAY=$(date -u +"%Y-%m-%d")
+
+          echo "🔎 Buscando ramas BEP actualizadas hoy: $TODAY"
+          echo ""
+
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E '^origin/BEP-[0-9]+' | while read branch; do
+
+            BRANCH_NAME="${branch#origin/}"
+            LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
+
+            if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
+              echo "⚠️  No se pudo obtener la fecha para $BRANCH_NAME"
+              continue
+            fi
+
+            LAST_COMMIT_DAY=$(date -d "$LAST_COMMIT_DATE" +%Y-%m-%d)
+
+            if [ "$LAST_COMMIT_DAY" = "$TODAY" ]; then
+              echo "📅 Rama actualizada HOY: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
+            else
+              echo "⏸️ Rama no fue modificada hoy: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
+            fi
+          done
