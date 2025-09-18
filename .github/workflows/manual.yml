@@ -1,10 +1,10 @@
-name: Detect BEP branches actualizadas hoy
+name: Detect JIRA-named branches updated today
 
 on:
   workflow_dispatch:
 
 jobs:
-  dry-run-today-bep-branches:
+  dry-run-today-jira-branches:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,26 +19,27 @@ jobs:
       - name: Fetch all branches
         run: git fetch --all
 
-      - name: Mostrar ramas BEP actualizadas hoy
+      - name: Mostrar ramas tipo JIRA actualizadas hoy (excluyendo 'test')
         run: |
           TODAY=$(date -u +"%Y-%m-%d")
-      
-          echo "🔎 Buscando ramas BEP actualizadas hoy: $TODAY"
+
+          echo "🔎 Buscando ramas tipo JIRA actualizadas hoy: $TODAY"
           echo ""
-      
+
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
-            grep -E '^origin/BEP-[0-9]+$' | while read branch; do
-      
+            grep -E '^origin/[A-Z]+-[0-9]+' | \
+            grep -v '^origin/test$' | while read branch; do
+
             BRANCH_NAME="${branch#origin/}"
             LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
-      
+
             if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
               echo "⚠️  No se pudo obtener la fecha para $BRANCH_NAME"
               continue
             fi
-      
+
             LAST_COMMIT_DAY=$(date -d "$LAST_COMMIT_DATE" +%Y-%m-%d)
-      
+
             if [ "$LAST_COMMIT_DAY" = "$TODAY" ]; then
               echo "📅 Rama actualizada HOY: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
             else
