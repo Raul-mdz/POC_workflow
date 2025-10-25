@@ -1,13 +1,19 @@
-name: Detect obsolete branches
+name: 🧹 Cleanup JIRA Branches (Real Run)
 
 on:
   workflow_dispatch:
+    inputs:
+      days_old:
+        description: 'Días de antigüedad para considerar obsoleta'
+        required: false
+        default: '10'
+        type: string
 
 jobs:
-  dry-run-obsolete-jira-branches:
+  cleanup-jira-branches:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write      # Necesario para eliminar ramas
       pull-requests: read
 
     steps:
@@ -23,52 +29,81 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
       - name: Fetch all branches
-        run: git fetch --all
+        run: git fetch --all --prune
 
-      - name: Mostrar ramas tipo JIRA candidatas a eliminar (dry-run)
+      - name: 🧹 Delete obsolete JIRA branches
         env:
           GH_REPO: ${{ github.repository }}
+          DAYS_OLD: ${{ inputs.days_old }}
         run: |
-          LIMIT_DATE=$(date -u -d '10 days ago' +%s)
-          echo "🔎 Buscando ramas JIRA obsoletas (sin cambios en últimos 10 días o con PR abierto)"
-          echo "   Límite: $(date -u -d '10 days ago' +%Y-%m-%d)"
+          set -e
+          LIMIT_DATE=$(date -u -d "$DAYS_OLD days ago" +%s)
+          echo "🧹 Eliminando ramas JIRA obsoletas (sin cambios en últimos $DAYS_OLD días)"
+          echo "   Límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
           echo ""
 
+          PROTECTED_REGEX='^(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$'
+
+          echo "📦 Descargando lista de PRs..."
+          gh pr list --state all --json headRefName,state,number > prs.json
+
           FOUND=0
+          DELETED=0
+          KEPT=0
+
+          echo "📋 Analizando ramas JIRA:"
+          echo "========================="
 
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
             grep -E '^origin/[A-Z]+-[0-9]+' | \
-            grep -v -E '^origin/(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$' | \
+            grep -v -E "^origin/($PROTECTED_REGEX)$" | \
           while read branch; do
-
             BRANCH_NAME="${branch#origin/}"
+            echo "::group::🧩 $BRANCH_NAME"
+
             LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
 
             if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
-              echo "⚠️  No se pudo obtener la fecha para $BRANCH_NAME"
+              echo "⚠️ No se pudo obtener la fecha de último commit para $BRANCH_NAME"
+              echo "::endgroup::"
               continue
             fi
 
-            # Convertir fecha de último commit a epoch
             LAST_COMMIT_EPOCH=$(date -d "$LAST_COMMIT_DATE" +%s)
+            PR_STATE=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .state' prs.json)
+            PR_NUMBER=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .number' prs.json)
 
-            # Validar si hay PR abierto para esta rama
-            PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[].number')
+            DELETE_REASON=""
 
-            if [ -n "$PR_EXISTS" ]; then
-              echo "🚫 Candidata a ELIMINAR (PR abierto #$PR_EXISTS): $BRANCH_NAME"
-              FOUND=1
-              continue
+            if [ "$PR_STATE" = "OPEN" ]; then
+              echo "🚫 Se conserva (PR abierto #$PR_NUMBER)"
+              KEPT=$((KEPT + 1))
+            elif [ "$PR_STATE" = "MERGED" ]; then
+              DELETE_REASON="PR #$PR_NUMBER mergeado"
+            elif [ "$PR_STATE" = "CLOSED" ]; then
+              DELETE_REASON="PR #$PR_NUMBER cerrado sin merge"
+            elif [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
+              DELETE_REASON="Último commit $LAST_COMMIT_DATE"
             fi
 
-            if [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
-              echo "🗑️ Candidata a ELIMINAR (último commit $LAST_COMMIT_DATE): $BRANCH_NAME"
-              FOUND=1
-            else
-              echo "✅ Conservada: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
+            if [ -n "$DELETE_REASON" ]; then
+              echo "🗑️ Eliminando rama $BRANCH_NAME ($DELETE_REASON)"
+              # Eliminar rama remota
+              git push origin --delete "$BRANCH_NAME" || echo "⚠️ No se pudo eliminar $BRANCH_NAME"
+              DELETED=$((DELETED + 1))
             fi
+
+            FOUND=1
+            echo "::endgroup::"
           done
 
+          echo ""
+          echo "📊 RESUMEN FINAL:"
+          echo "=================="
+          echo "🗑️ Ramas eliminadas: $DELETED"
+          echo "✅ Ramas conservadas: $KEPT"
+          echo "📈 Total analizadas: $((DELETED + KEPT))"
+
           if [ "$FOUND" -eq 0 ]; then
-            echo "⚠️ No se encontraron ramas obsoletas candidatas a eliminar."
+            echo "✅ No se encontraron ramas JIRA para analizar."
           fi
