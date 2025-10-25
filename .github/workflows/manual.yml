@@ -1,6 +1,9 @@
 name: 🧹 JIRA Branch Cleanup
 
 on:
+  schedule:
+    # Ejecutar todos los días a las 2:00 AM UTC (puedes ajustar el horario)
+    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       days_old:
@@ -44,6 +47,7 @@ jobs:
           LIMIT_DATE=$(date -u -d "$DAYS_OLD days ago" +%s)
           echo "🧹 Eliminando ramas JIRA obsoletas (sin cambios en últimos $DAYS_OLD días)"
           echo "   Límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
+          echo "   Timestamp límite: $LIMIT_DATE"
           echo ""
 
           PROTECTED_REGEX='^(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$'
@@ -57,11 +61,18 @@ jobs:
 
           echo "📋 REVISANDO RAMAS JIRA:"
           echo "========================"
-
-          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+          
+          # Crear array de ramas para procesar
+          BRANCHES=()
+          while IFS= read -r branch; do
+            BRANCHES+=("$branch")
+          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
             grep -E '^origin/[A-Z]+-[0-9]+' | \
-            grep -v -E "^origin/($PROTECTED_REGEX)$" | \
-          while read branch; do
+            grep -v -E "^origin/($PROTECTED_REGEX)$")
+          
+          echo "🔍 Encontradas ${#BRANCHES[@]} ramas JIRA para analizar"
+          
+          for branch in "${BRANCHES[@]}"; do
             BRANCH_NAME="${branch#origin/}"
             echo "::group::🧩 $BRANCH_NAME"
 
@@ -76,6 +87,13 @@ jobs:
             LAST_COMMIT_EPOCH=$(date -d "$LAST_COMMIT_DATE" +%s)
             PR_STATE=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .state' prs.json)
             PR_NUMBER=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .number' prs.json)
+            
+            echo "📊 Análisis de $BRANCH_NAME:"
+            echo "   Último commit: $LAST_COMMIT_DATE"
+            echo "   Timestamp: $LAST_COMMIT_EPOCH"
+            echo "   Límite: $LIMIT_DATE"
+            echo "   PR State: $PR_STATE"
+            echo "   PR Number: $PR_NUMBER"
 
             DELETE_BRANCH=false
 
@@ -115,6 +133,8 @@ jobs:
             FOUND=1
             echo "::endgroup::"
           done
+          
+          echo "🔍 Procesamiento completado. FOUND=$FOUND"
 
           echo ""
           echo "📊 RESUMEN FINAL:"
