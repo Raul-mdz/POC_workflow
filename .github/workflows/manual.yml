@@ -6,7 +6,7 @@ on:
       days_old:
         description: 'Días de antigüedad para considerar obsoleta'
         required: false
-        default: '1'
+        default: '10'
         type: string
 
 jobs:
@@ -15,6 +15,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
+      actions: read
 
     steps:
       - name: Checkout
@@ -27,6 +28,9 @@ jobs:
 
       - name: Authenticate GitHub CLI
         run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+        
+      - name: Verify GitHub CLI authentication
+        run: gh auth status
 
       - name: Fetch all branches
         run: git fetch --all --prune
@@ -94,8 +98,18 @@ jobs:
 
             if [ "$DELETE_BRANCH" = true ]; then
               echo "🧹 Eliminando rama remota origin/$BRANCH_NAME..."
-              git push origin --delete "$BRANCH_NAME" || echo "⚠️ No se pudo eliminar $BRANCH_NAME"
-              DELETED=$((DELETED + 1))
+              if git push origin --delete "$BRANCH_NAME" 2>&1; then
+                echo "✅ Rama $BRANCH_NAME eliminada exitosamente"
+                DELETED=$((DELETED + 1))
+              else
+                echo "⚠️ Error al eliminar $BRANCH_NAME - intentando con GitHub CLI..."
+                if gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$BRANCH_NAME" 2>&1; then
+                  echo "✅ Rama $BRANCH_NAME eliminada con GitHub CLI"
+                  DELETED=$((DELETED + 1))
+                else
+                  echo "❌ No se pudo eliminar $BRANCH_NAME con ningún método"
+                fi
+              fi
             fi
 
             FOUND=1
@@ -111,4 +125,12 @@ jobs:
 
           if [ "$FOUND" -eq 0 ]; then
             echo "✅ No se encontraron ramas JIRA para analizar."
+          fi
+          
+          # Verificar que las ramas se eliminaron correctamente
+          if [ "$DELETED" -gt 0 ]; then
+            echo ""
+            echo "🔄 Verificando eliminación de ramas..."
+            git fetch --all --prune
+            echo "✅ Verificación completada"
           fi
