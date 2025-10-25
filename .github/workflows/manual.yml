@@ -51,7 +51,7 @@ jobs:
           echo "   Criterio: Eliminar ramas con último commit anterior a esta fecha"
           echo ""
 
-          PROTECTED_REGEX='^(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$'
+          PROTECTED_REGEX='^(main|dev|master|develop|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog|test)$'
 
           echo "📦 Descargando lista de PRs (open/closed/merged)..."
           gh pr list --state all --json headRefName,state,number > prs.json
@@ -63,6 +63,23 @@ jobs:
           echo "📋 REVISANDO RAMAS JIRA:"
           echo "========================"
           
+          # Mostrar todas las ramas remotas primero
+          echo "🔍 Todas las ramas remotas:"
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sort
+          echo ""
+          
+          # Mostrar ramas JIRA encontradas
+          echo "🔍 Ramas JIRA encontradas:"
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E '^origin/[A-Z]+-[0-9]+' | sort
+          echo ""
+          
+          # Mostrar ramas protegidas
+          echo "🛡️ Ramas protegidas (no se eliminarán):"
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E "^origin/($PROTECTED_REGEX)$" | sort
+          echo ""
+          
           # Crear array de ramas para procesar
           BRANCHES=()
           while IFS= read -r branch; do
@@ -72,6 +89,12 @@ jobs:
             grep -v -E "^origin/($PROTECTED_REGEX)$")
           
           echo "🔍 Encontradas ${#BRANCHES[@]} ramas JIRA para analizar"
+          
+          if [ ${#BRANCHES[@]} -eq 0 ]; then
+            echo "⚠️ No se encontraron ramas JIRA para procesar"
+            echo "   Verifica que existan ramas con formato JIRA (ej: BEP-123, ABC-456)"
+            echo "   Patrón buscado: origin/[A-Z]+-[0-9]+"
+          fi
           
           for branch in "${BRANCHES[@]}"; do
             BRANCH_NAME="${branch#origin/}"
