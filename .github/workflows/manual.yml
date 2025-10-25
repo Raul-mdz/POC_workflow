@@ -2,8 +2,8 @@ name: 🧹 JIRA Branch Cleanup
 
 on:
   schedule:
-    # Ejecutar todos los días a las 2:00 AM UTC (puedes ajustar el horario)
-    - cron: '0 2 * * *'
+    # Ejecutar cada 10 días a las 2:00 AM UTC
+    - cron: '0 2 */10 * *'
   workflow_dispatch:
     inputs:
       days_old:
