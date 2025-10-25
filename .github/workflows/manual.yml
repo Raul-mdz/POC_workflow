@@ -6,7 +6,7 @@ on:
       days_old:
         description: 'Días de antigüedad para considerar obsoleta'
         required: false
-        default: '10'
+        default: '1'
         type: string
 
 jobs:
