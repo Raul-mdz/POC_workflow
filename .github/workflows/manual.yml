@@ -1,0 +1,69 @@
+name: Detect JIRA-named branches updated today
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dry-run-today-jira-branches:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Fetch all branches
+        run: git fetch --all
+
+      - name: Mostrar ramas tipo JIRA actualizadas hoy (excluyendo ramas específicas y PRs abiertos)
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TODAY=$(date -u +"%Y-%m-%d")
+
+          echo "🔎 Buscando ramas tipo JIRA actualizadas hoy: $TODAY"
+          echo ""
+
+          FOUND=0
+
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E '^origin/[A-Z]+-[0-9]+' | \
+            grep -v -E '^origin/(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$' | \
+          while read branch; do
+
+            BRANCH_NAME="${branch#origin/}"
+            LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
+
+            if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
+              echo "⚠️  No se pudo obtener la fecha para $BRANCH_NAME"
+              continue
+            fi
+
+            # Validar si hay PR abierto para esta rama
+            PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[].number')
+
+            if [ -n "$PR_EXISTS" ]; then
+              echo "🚫 Rama $BRANCH_NAME tiene un Pull Request abierto (#$PR_EXISTS). Se omite."
+              continue
+            fi
+
+            LAST_COMMIT_DAY=$(date -d "$LAST_COMMIT_DATE" +%Y-%m-%d)
+
+            if [ "$LAST_COMMIT_DAY" = "$TODAY" ]; then
+              echo "📅 Rama actualizada HOY: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
+              FOUND=1
+            else
+              echo "⏸️ Rama no fue modificada hoy: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "⚠️ No se encontraron ramas JIRA actualizadas hoy sin PR abierto."
+          fi
