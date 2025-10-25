@@ -11,6 +11,11 @@ on:
         required: false
         default: '10'
         type: string
+      dry_run:
+        description: 'Modo dry-run (solo mostrar, no eliminar)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   cleanup-jira-branches:
@@ -42,10 +47,15 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           DAYS_OLD: ${{ inputs.days_old }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -e
           LIMIT_DATE=$(date -u -d "$DAYS_OLD days ago" +%s)
-          echo "🧹 Eliminando ramas JIRA obsoletas (sin actividad en últimos $DAYS_OLD días)"
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 MODO DRY-RUN: Solo mostrando ramas candidatas (no se eliminará nada)"
+          fi
+          echo "🧹 Analizando ramas JIRA obsoletas (sin actividad en últimos $DAYS_OLD días)"
           echo "   Límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
           echo "   Timestamp límite: $LIMIT_DATE"
           echo "   Criterio: Eliminar ramas con último commit anterior a esta fecha"
@@ -125,14 +135,8 @@ jobs:
             if [ "$PR_STATE" = "OPEN" ]; then
               echo "🚫 Conservando (PR abierto #$PR_NUMBER)"
               KEPT=$((KEPT + 1))
-            elif [ "$PR_STATE" = "MERGED" ]; then
-              echo "🟢 Eliminando (PR #$PR_NUMBER mergeado)"
-              DELETE_BRANCH=true
-            elif [ "$PR_STATE" = "CLOSED" ]; then
-              echo "🟠 Eliminando (PR #$PR_NUMBER cerrado sin merge)"
-              DELETE_BRANCH=true
             elif [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
-              echo "🗑️ Eliminando (último commit hace más de $DAYS_OLD días: $LAST_COMMIT_DATE)"
+              echo "🗑️ Eliminando (sin actividad > $DAYS_OLD días: $LAST_COMMIT_DATE)"
               DELETE_BRANCH=true
             else
               echo "✅ Conservando (último commit reciente: $LAST_COMMIT_DATE)"
@@ -140,17 +144,22 @@ jobs:
             fi
 
             if [ "$DELETE_BRANCH" = true ]; then
-              echo "🧹 Eliminando rama remota origin/$BRANCH_NAME..."
-              if git push origin --delete "$BRANCH_NAME" 2>&1; then
-                echo "✅ Rama $BRANCH_NAME eliminada exitosamente"
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "🔍 [DRY-RUN] Se eliminaría: $BRANCH_NAME"
                 DELETED=$((DELETED + 1))
               else
-                echo "⚠️ Error al eliminar $BRANCH_NAME - intentando con GitHub CLI..."
-                if gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$BRANCH_NAME" 2>&1; then
-                  echo "✅ Rama $BRANCH_NAME eliminada con GitHub CLI"
+                echo "🧹 Eliminando rama remota origin/$BRANCH_NAME..."
+                if git push origin --delete "$BRANCH_NAME" 2>&1; then
+                  echo "✅ Rama $BRANCH_NAME eliminada exitosamente"
                   DELETED=$((DELETED + 1))
                 else
-                  echo "❌ No se pudo eliminar $BRANCH_NAME con ningún método"
+                  echo "⚠️ Error al eliminar $BRANCH_NAME - intentando con GitHub CLI..."
+                  if gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$BRANCH_NAME" 2>&1; then
+                    echo "✅ Rama $BRANCH_NAME eliminada con GitHub CLI"
+                    DELETED=$((DELETED + 1))
+                  else
+                    echo "❌ No se pudo eliminar $BRANCH_NAME con ningún método"
+                  fi
                 fi
               fi
             fi
@@ -164,7 +173,13 @@ jobs:
           echo ""
           echo "📊 RESUMEN FINAL:"
           echo "=================="
-          echo "🟢 Ramas eliminadas: $DELETED"
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 Modo: DRY-RUN (simulación)"
+            echo "🟢 Ramas que se eliminarían: $DELETED"
+          else
+            echo "🔍 Modo: PRODUCCIÓN"
+            echo "🟢 Ramas eliminadas: $DELETED"
+          fi
           echo "✅ Ramas conservadas: $KEPT"
           echo "📈 Total analizadas: $((DELETED + KEPT))"
 
@@ -172,8 +187,8 @@ jobs:
             echo "✅ No se encontraron ramas JIRA para analizar."
           fi
           
-          # Verificar que las ramas se eliminaron correctamente
-          if [ "$DELETED" -gt 0 ]; then
+          # Verificar que las ramas se eliminaron correctamente (solo en modo producción)
+          if [ "$DELETED" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
             echo ""
             echo "🔄 Verificando eliminación de ramas..."
             git fetch --all --prune
