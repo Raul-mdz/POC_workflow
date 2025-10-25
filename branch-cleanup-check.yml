@@ -1,0 +1,74 @@
+name: Detect obsolete branches
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dry-run-obsolete-jira-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Fetch all branches
+        run: git fetch --all
+
+      - name: Mostrar ramas tipo JIRA candidatas a eliminar (dry-run)
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          LIMIT_DATE=$(date -u -d '10 days ago' +%s)
+          echo "🔎 Buscando ramas JIRA obsoletas (sin cambios en últimos 10 días o con PR abierto)"
+          echo "   Límite: $(date -u -d '10 days ago' +%Y-%m-%d)"
+          echo ""
+
+          FOUND=0
+
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E '^origin/[A-Z]+-[0-9]+' | \
+            grep -v -E '^origin/(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$' | \
+          while read branch; do
+
+            BRANCH_NAME="${branch#origin/}"
+            LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
+
+            if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
+              echo "⚠️  No se pudo obtener la fecha para $BRANCH_NAME"
+              continue
+            fi
+
+            # Convertir fecha de último commit a epoch
+            LAST_COMMIT_EPOCH=$(date -d "$LAST_COMMIT_DATE" +%s)
+
+            # Validar si hay PR abierto para esta rama
+            PR_EXISTS=$(gh pr list --head "$BRANCH_NAME" --state open --json number -q '.[].number')
+
+            if [ -n "$PR_EXISTS" ]; then
+              echo "🚫 Candidata a ELIMINAR (PR abierto #$PR_EXISTS): $BRANCH_NAME"
+              FOUND=1
+              continue
+            fi
+
+            if [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
+              echo "🗑️ Candidata a ELIMINAR (último commit $LAST_COMMIT_DATE): $BRANCH_NAME"
+              FOUND=1
+            else
+              echo "✅ Conservada: $BRANCH_NAME (último commit: $LAST_COMMIT_DATE)"
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "⚠️ No se encontraron ramas obsoletas candidatas a eliminar."
+          fi
