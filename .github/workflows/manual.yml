@@ -45,9 +45,10 @@ jobs:
         run: |
           set -e
           LIMIT_DATE=$(date -u -d "$DAYS_OLD days ago" +%s)
-          echo "🧹 Eliminando ramas JIRA obsoletas (sin cambios en últimos $DAYS_OLD días)"
+          echo "🧹 Eliminando ramas JIRA obsoletas (sin actividad en últimos $DAYS_OLD días)"
           echo "   Límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
           echo "   Timestamp límite: $LIMIT_DATE"
+          echo "   Criterio: Eliminar ramas con último commit anterior a esta fecha"
           echo ""
 
           PROTECTED_REGEX='^(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$'
@@ -92,6 +93,7 @@ jobs:
             echo "   Último commit: $LAST_COMMIT_DATE"
             echo "   Timestamp: $LAST_COMMIT_EPOCH"
             echo "   Límite: $LIMIT_DATE"
+            echo "   Días sin actividad: $(( (LIMIT_DATE - LAST_COMMIT_EPOCH) / 86400 ))"
             echo "   PR State: $PR_STATE"
             echo "   PR Number: $PR_NUMBER"
 
@@ -107,7 +109,7 @@ jobs:
               echo "🟠 Eliminando (PR #$PR_NUMBER cerrado sin merge)"
               DELETE_BRANCH=true
             elif [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
-              echo "🗑️ Eliminando (último commit $LAST_COMMIT_DATE)"
+              echo "🗑️ Eliminando (último commit hace más de $DAYS_OLD días: $LAST_COMMIT_DATE)"
               DELETE_BRANCH=true
             else
               echo "✅ Conservando (último commit reciente: $LAST_COMMIT_DATE)"
