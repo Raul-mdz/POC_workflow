@@ -1,4 +1,4 @@
-name: 🧹 Cleanup JIRA Branches (Real Run)
+name: 🧹 JIRA Branch Cleanup
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ jobs:
   cleanup-jira-branches:
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # Necesario para eliminar ramas
+      contents: write
       pull-requests: read
 
     steps:
@@ -31,7 +31,7 @@ jobs:
       - name: Fetch all branches
         run: git fetch --all --prune
 
-      - name: 🧹 Delete obsolete JIRA branches
+      - name: 🧹 Cleanup obsolete JIRA branches
         env:
           GH_REPO: ${{ github.repository }}
           DAYS_OLD: ${{ inputs.days_old }}
@@ -44,15 +44,15 @@ jobs:
 
           PROTECTED_REGEX='^(main|dev|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog)$'
 
-          echo "📦 Descargando lista de PRs..."
+          echo "📦 Descargando lista de PRs (open/closed/merged)..."
           gh pr list --state all --json headRefName,state,number > prs.json
 
           FOUND=0
           DELETED=0
           KEPT=0
 
-          echo "📋 Analizando ramas JIRA:"
-          echo "========================="
+          echo "📋 REVISANDO RAMAS JIRA:"
+          echo "========================"
 
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
             grep -E '^origin/[A-Z]+-[0-9]+' | \
@@ -73,22 +73,27 @@ jobs:
             PR_STATE=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .state' prs.json)
             PR_NUMBER=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .number' prs.json)
 
-            DELETE_REASON=""
+            DELETE_BRANCH=false
 
             if [ "$PR_STATE" = "OPEN" ]; then
-              echo "🚫 Se conserva (PR abierto #$PR_NUMBER)"
+              echo "🚫 Conservando (PR abierto #$PR_NUMBER)"
               KEPT=$((KEPT + 1))
             elif [ "$PR_STATE" = "MERGED" ]; then
-              DELETE_REASON="PR #$PR_NUMBER mergeado"
+              echo "🟢 Eliminando (PR #$PR_NUMBER mergeado)"
+              DELETE_BRANCH=true
             elif [ "$PR_STATE" = "CLOSED" ]; then
-              DELETE_REASON="PR #$PR_NUMBER cerrado sin merge"
+              echo "🟠 Eliminando (PR #$PR_NUMBER cerrado sin merge)"
+              DELETE_BRANCH=true
             elif [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
-              DELETE_REASON="Último commit $LAST_COMMIT_DATE"
+              echo "🗑️ Eliminando (último commit $LAST_COMMIT_DATE)"
+              DELETE_BRANCH=true
+            else
+              echo "✅ Conservando (último commit reciente: $LAST_COMMIT_DATE)"
+              KEPT=$((KEPT + 1))
             fi
 
-            if [ -n "$DELETE_REASON" ]; then
-              echo "🗑️ Eliminando rama $BRANCH_NAME ($DELETE_REASON)"
-              # Eliminar rama remota
+            if [ "$DELETE_BRANCH" = true ]; then
+              echo "🧹 Eliminando rama remota origin/$BRANCH_NAME..."
               git push origin --delete "$BRANCH_NAME" || echo "⚠️ No se pudo eliminar $BRANCH_NAME"
               DELETED=$((DELETED + 1))
             fi
@@ -100,7 +105,7 @@ jobs:
           echo ""
           echo "📊 RESUMEN FINAL:"
           echo "=================="
-          echo "🗑️ Ramas eliminadas: $DELETED"
+          echo "🟢 Ramas eliminadas: $DELETED"
           echo "✅ Ramas conservadas: $KEPT"
           echo "📈 Total analizadas: $((DELETED + KEPT))"
 
