@@ -1,106 +1,192 @@
-name: 🧹 JIRA Branch Inspector
+name: 🧹 JIRA Branch Cleanup
 
 on:
   workflow_dispatch:
     inputs:
       days_old:
-        description: 'Días de antigüedad para marcar ramas como obsoletas'
+        description: 'Días de antigüedad para considerar obsoleta'
         required: true
         default: '10'
         type: string
+      dry_run:
+        description: 'Modo dry-run (solo mostrar, no eliminar)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  inspect-jira-branches:
+  cleanup-jira-branches:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: read
       actions: read
 
     steps:
-      - name: 🧩 Checkout del repositorio
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: ⚙️ Configurar Git
+      - name: Configure Git
         run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
 
-      - name: 🔐 Autenticar con GitHub CLI
+      - name: Authenticate GitHub CLI
         run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
         
-      - name: ✅ Verificar autenticación
+      - name: Verify GitHub CLI authentication
         run: gh auth status
 
-      - name: 🔄 Obtener todas las ramas remotas
+      - name: Fetch all branches
         run: git fetch --all --prune
 
-      - name: 🔍 Analizar ramas JIRA
+      - name: 🧹 Cleanup obsolete JIRA branches
         env:
           GH_REPO: ${{ github.repository }}
           DAYS_OLD: ${{ inputs.days_old }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -e
           LIMIT_DATE=$(date -u -d "$DAYS_OLD days ago" +%s)
-
-          echo "🧹 Analizando ramas JIRA sin actividad en los últimos $DAYS_OLD días"
-          echo "   Fecha límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 MODO DRY-RUN: Solo mostrando ramas candidatas (no se eliminará nada)"
+          fi
+          echo "🧹 Analizando ramas JIRA obsoletas (sin actividad en últimos $DAYS_OLD días)"
+          echo "   Límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
+          echo "   Timestamp límite: $LIMIT_DATE"
+          echo "   Criterio: Eliminar ramas con último commit anterior a esta fecha"
           echo ""
 
           PROTECTED_REGEX='^(main|dev|master|develop|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog|test)$'
 
-          # Listar todas las ramas
-          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sort > all_branches.txt
-
-          echo "📦 Descargando lista de Pull Requests..."
+          echo "📦 Descargando lista de PRs (open/closed/merged)..."
           gh pr list --state all --json headRefName,state,number > prs.json
 
+          FOUND=0
+          DELETED=0
+          KEPT=0
+
           echo "📋 REVISANDO RAMAS JIRA:"
-          echo "========================="
+          echo "========================"
+          
+          echo "🔍 Todas las ramas remotas:"
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sort
+          echo ""
+          
+          echo "🔍 Ramas JIRA encontradas:"
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E '^origin/[A-Z]+-[0-9]+' | sort
+          echo ""
+          
+          echo "🛡️ Ramas protegidas (no se eliminarán):"
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E "^origin/($PROTECTED_REGEX)$" | sort
+          echo ""
 
+          BRANCHES=()
           while IFS= read -r branch; do
+            BRANCHES+=("$branch")
+          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | \
+            grep -E '^origin/[A-Z]+-[0-9]+' | \
+            grep -v -E "^origin/($PROTECTED_REGEX)$")
+          
+          echo "🔍 Encontradas ${#BRANCHES[@]} ramas JIRA para analizar"
+          
+          if [ ${#BRANCHES[@]} -eq 0 ]; then
+            echo "⚠️ No se encontraron ramas JIRA para procesar"
+            echo "   Verifica que existan ramas con formato JIRA (ej: BEP-123, ABC-456)"
+            echo "   Patrón buscado: origin/[A-Z]+-[0-9]+"
+          fi
+          
+          for branch in "${BRANCHES[@]}"; do
             BRANCH_NAME="${branch#origin/}"
+            echo "::group::🧩 $BRANCH_NAME"
 
-            # Filtrar solo ramas tipo JIRA (ej: ABC-123)
-            if [[ ! "$BRANCH_NAME" =~ ^[A-Z]+-[0-9]+ ]]; then
-              continue
-            fi
+            LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" || echo "unknown")
 
-            # Ignorar ramas protegidas
-            if [[ "$BRANCH_NAME" =~ $PROTECTED_REGEX ]]; then
-              echo "🛡️  $BRANCH_NAME (rama protegida)"
-              continue
-            fi
-
-            LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" 2>/dev/null || echo "unknown")
             if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
-              echo "⚠️  $BRANCH_NAME (sin commits o inaccesible)"
+              echo "⚠️ No se pudo obtener la fecha de último commit para $BRANCH_NAME"
+              echo "::endgroup::"
               continue
             fi
 
             LAST_COMMIT_EPOCH=$(date -d "$LAST_COMMIT_DATE" +%s)
-            DAYS_DIFF=$(( ( $(date +%s) - LAST_COMMIT_EPOCH ) / 86400 ))
-
             PR_STATE=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .state' prs.json)
             PR_NUMBER=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .number' prs.json)
+            
+            echo "📊 Análisis de $BRANCH_NAME:"
+            echo "   Último commit: $LAST_COMMIT_DATE"
+            echo "   Timestamp: $LAST_COMMIT_EPOCH"
+            echo "   Límite: $LIMIT_DATE"
+            echo "   Días sin actividad: $(( (LIMIT_DATE - LAST_COMMIT_EPOCH) / 86400 ))"
+            echo "   PR State: $PR_STATE"
+            echo "   PR Number: $PR_NUMBER"
 
-            ICON=""
-            STATUS=""
+            DELETE_BRANCH=false
 
+            # Iconos según estado
             if [ "$PR_STATE" = "OPEN" ]; then
               ICON="🟢"
-              STATUS="PR abierto (#$PR_NUMBER)"
-            elif [ "$DAYS_DIFF" -gt "$DAYS_OLD" ]; then
-              ICON="🔴"
-              STATUS="Sin actividad ($DAYS_DIFF días)"
+              echo "$ICON Conservando (PR abierto #$PR_NUMBER)"
+              KEPT=$((KEPT + 1))
+            elif [ "$LAST_COMMIT_EPOCH" -lt "$LIMIT_DATE" ]; then
+              ICON="🗑️"
+              echo "$ICON Eliminando (sin actividad > $DAYS_OLD días: $LAST_COMMIT_DATE)"
+              DELETE_BRANCH=true
             else
-              ICON="🟡"
-              STATUS="Reciente ($DAYS_DIFF días)"
+              ICON="✅"
+              echo "$ICON Conservando (último commit reciente: $LAST_COMMIT_DATE)"
+              KEPT=$((KEPT + 1))
             fi
 
-            printf "%s %-40s → %s (último commit: %s)\n" "$ICON" "$BRANCH_NAME" "$STATUS" "$LAST_COMMIT_DATE"
+            if [ "$DELETE_BRANCH" = true ]; then
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "🔍 [DRY-RUN] Se eliminaría: $BRANCH_NAME"
+                DELETED=$((DELETED + 1))
+              else
+                echo "🧹 Eliminando rama remota origin/$BRANCH_NAME..."
+                if git push origin --delete "$BRANCH_NAME" 2>&1; then
+                  echo "✅ Rama $BRANCH_NAME eliminada exitosamente"
+                  DELETED=$((DELETED + 1))
+                else
+                  echo "⚠️ Error al eliminar $BRANCH_NAME - intentando con GitHub CLI..."
+                  if gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$BRANCH_NAME" 2>&1; then
+                    echo "✅ Rama $BRANCH_NAME eliminada con GitHub CLI"
+                    DELETED=$((DELETED + 1))
+                  else
+                    echo "❌ No se pudo eliminar $BRANCH_NAME con ningún método"
+                  fi
+                fi
+              fi
+            fi
 
-          done < all_branches.txt
+            FOUND=1
+            echo "::endgroup::"
+          done
+          
+          echo "🔍 Procesamiento completado. FOUND=$FOUND"
 
           echo ""
-          echo "✅ Análisis completado con éxito"
+          echo "📊 RESUMEN FINAL:"
+          echo "=================="
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 Modo: DRY-RUN (simulación)"
+            echo "🟢 Ramas que se eliminarían: $DELETED"
+          else
+            echo "🔍 Modo: PRODUCCIÓN"
+            echo "🟢 Ramas eliminadas: $DELETED"
+          fi
+          echo "✅ Ramas conservadas: $KEPT"
+          echo "📈 Total analizadas: $((DELETED + KEPT))"
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "✅ No se encontraron ramas JIRA para analizar."
+          fi
+          
+          if [ "$DELETED" -gt 0 ] && [ "$DRY_RUN" = "false" ]; then
+            echo ""
+            echo "🔄 Verificando eliminación de ramas..."
+            git fetch --all --prune
+            echo "✅ Verificación completada"
+          fi
