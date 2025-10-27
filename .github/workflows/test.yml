@@ -18,21 +18,21 @@ jobs:
       actions: read
 
     steps:
-      - name: Checkout
+      - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
-      - name: Configure Git
+      - name: ⚙️ Configurar Git
         run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
 
-      - name: Authenticate GitHub CLI
+      - name: 🔐 Autenticar con GitHub CLI
         run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
         
-      - name: Verify GitHub CLI authentication
+      - name: ✅ Verificar autenticación
         run: gh auth status
 
-      - name: Fetch all branches
+      - name: 🔄 Obtener todas las ramas remotas
         run: git fetch --all --prune
 
       - name: 🔍 Analizar ramas JIRA
@@ -49,10 +49,10 @@ jobs:
 
           PROTECTED_REGEX='^(main|dev|master|develop|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog|test)$'
 
-          # Obtener todas las ramas
+          # Listar todas las ramas
           git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sort > all_branches.txt
 
-          echo "📦 Descargando lista de PRs..."
+          echo "📦 Descargando lista de Pull Requests..."
           gh pr list --state all --json headRefName,state,number > prs.json
 
           echo "📋 REVISANDO RAMAS JIRA:"
@@ -61,7 +61,7 @@ jobs:
           while IFS= read -r branch; do
             BRANCH_NAME="${branch#origin/}"
 
-            # Filtrar solo ramas tipo JIRA
+            # Filtrar solo ramas tipo JIRA (ej: ABC-123)
             if [[ ! "$BRANCH_NAME" =~ ^[A-Z]+-[0-9]+ ]]; then
               continue
             fi
@@ -103,4 +103,4 @@ jobs:
           done < all_branches.txt
 
           echo ""
-          echo "✅ Análisis completado"
+          echo "✅ Análisis completado con éxito"
