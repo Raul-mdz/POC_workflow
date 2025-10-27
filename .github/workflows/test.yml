@@ -1,0 +1,106 @@
+name: 🧹 JIRA Branch Inspector
+
+on:
+  workflow_dispatch:
+    inputs:
+      days_old:
+        description: 'Días de antigüedad para marcar ramas como obsoletas'
+        required: true
+        default: '10'
+        type: string
+
+jobs:
+  inspect-jira-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+
+      - name: Authenticate GitHub CLI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+        
+      - name: Verify GitHub CLI authentication
+        run: gh auth status
+
+      - name: Fetch all branches
+        run: git fetch --all --prune
+
+      - name: 🔍 Analizar ramas JIRA
+        env:
+          GH_REPO: ${{ github.repository }}
+          DAYS_OLD: ${{ inputs.days_old }}
+        run: |
+          set -e
+          LIMIT_DATE=$(date -u -d "$DAYS_OLD days ago" +%s)
+
+          echo "🧹 Analizando ramas JIRA sin actividad en los últimos $DAYS_OLD días"
+          echo "   Fecha límite: $(date -u -d "$DAYS_OLD days ago" +%Y-%m-%d)"
+          echo ""
+
+          PROTECTED_REGEX='^(main|dev|master|develop|feature/Vuexy-4\.0\.0-starter-kit-init-template|feature/Vuexy-4\.0\.0-full-version-init-template|docs/update-readme-and-changelog|test)$'
+
+          # Obtener todas las ramas
+          git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | sort > all_branches.txt
+
+          echo "📦 Descargando lista de PRs..."
+          gh pr list --state all --json headRefName,state,number > prs.json
+
+          echo "📋 REVISANDO RAMAS JIRA:"
+          echo "========================="
+
+          while IFS= read -r branch; do
+            BRANCH_NAME="${branch#origin/}"
+
+            # Filtrar solo ramas tipo JIRA
+            if [[ ! "$BRANCH_NAME" =~ ^[A-Z]+-[0-9]+ ]]; then
+              continue
+            fi
+
+            # Ignorar ramas protegidas
+            if [[ "$BRANCH_NAME" =~ $PROTECTED_REGEX ]]; then
+              echo "🛡️  $BRANCH_NAME (rama protegida)"
+              continue
+            fi
+
+            LAST_COMMIT_DATE=$(git log -1 --format="%cI" "$branch" 2>/dev/null || echo "unknown")
+            if [ "$LAST_COMMIT_DATE" = "unknown" ]; then
+              echo "⚠️  $BRANCH_NAME (sin commits o inaccesible)"
+              continue
+            fi
+
+            LAST_COMMIT_EPOCH=$(date -d "$LAST_COMMIT_DATE" +%s)
+            DAYS_DIFF=$(( ( $(date +%s) - LAST_COMMIT_EPOCH ) / 86400 ))
+
+            PR_STATE=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .state' prs.json)
+            PR_NUMBER=$(jq -r --arg b "$BRANCH_NAME" '.[] | select(.headRefName==$b) | .number' prs.json)
+
+            ICON=""
+            STATUS=""
+
+            if [ "$PR_STATE" = "OPEN" ]; then
+              ICON="🟢"
+              STATUS="PR abierto (#$PR_NUMBER)"
+            elif [ "$DAYS_DIFF" -gt "$DAYS_OLD" ]; then
+              ICON="🔴"
+              STATUS="Sin actividad ($DAYS_DIFF días)"
+            else
+              ICON="🟡"
+              STATUS="Reciente ($DAYS_DIFF días)"
+            fi
+
+            printf "%s %-40s → %s (último commit: %s)\n" "$ICON" "$BRANCH_NAME" "$STATUS" "$LAST_COMMIT_DATE"
+
+          done < all_branches.txt
+
+          echo ""
+          echo "✅ Análisis completado"
